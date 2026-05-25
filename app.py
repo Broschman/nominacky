@@ -15,7 +15,6 @@ POVOLENE_ZAVODY = [
 
 # --- POMOCNÉ FUNKCE ---
 def urci_kategorii(klub):
-    # Definice výjimek pro registrační čísla dívek, která nesplňují standardní formát
     vyjimky_holky = ["UOL0740", "SJ10750", "SJI0750"]
     klub_upraveny = str(klub).strip()
     if klub_upraveny in vyjimky_holky:
@@ -24,7 +23,6 @@ def urci_kategorii(klub):
     match = re.search(r"\d{4}$", klub_upraveny)
     if match:
         id_cislo = int(match.group(0)[2:4])
-        # Dívky mají třetí a čtvrté číslo v registraci 50 a vyšší
         if id_cislo >= 50:
             return "Juniorky"
     return "Junioři"
@@ -77,7 +75,6 @@ def ziskej_body_za_drahu(cas_str, klub):
         else: return 0
 
 def spocitej_skore_a_kriteria(df_zavodnik):
-    """Algoritmus počítá celkové skóre (dráha + 2 nejlepší OB) a tie-breakery."""
     body_draha = 0
     body_ob = []
     body_stredni = 0
@@ -91,7 +88,6 @@ def spocitej_skore_a_kriteria(df_zavodnik):
             if radek["Závod"] == "Střední trať (krátká)":
                 body_stredni = body
 
-    # Výběr dvou nejlepších výsledků z OB závodů
     body_ob.sort(reverse=True)
     soucet_dvou_ob = sum(body_ob[:2])
     nejlepsi_ob = body_ob[0] if len(body_ob) > 0 else 0
@@ -105,11 +101,9 @@ def spocitej_skore_a_kriteria(df_zavodnik):
         'Tie3_Stredni': body_stredni
     })
 
-# --- HLAVNÍ STRÁNKA STREAMLITU ---
 st.title("Nominační žebříček JMS 2026")
 st.write("Aplikace automaticky předepisuje již uložená data do editovatelných tabulek.")
 
-# Načtení databáze
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
     if "Pořadí" in df_historie.columns and "Pořadí/Čas" not in df_historie.columns:
@@ -117,19 +111,20 @@ if os.path.exists(SOUBOR_DATA):
 else:
     df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
 
-# Zobrazení žebříčků na hlavní stránce
+# --- ZOBRAZENÍ HLAVNÍCH TABULEK ---
 if not df_historie.empty:
     st.header("Aktuální nominační žebříček")
     
     df_skore = df_historie.groupby('Jméno').apply(spocitej_skore_a_kriteria).reset_index()
     df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
-    df_pivot_zobr = df_historie.pivot_table(index='Jméno', columns='Závod', values='Získané body', aggfunc='first').reset_index()
+    
+    # OPRAVA 1: Používáme pivot místo pivot_table
+    df_pivot_zobr = df_historie.drop_duplicates(subset=['Jméno', 'Závod'], keep='last').pivot(index='Jméno', columns='Závod', values='Získané body').reset_index()
     
     df_zobr = pd.merge(df_unikatni, df_pivot_zobr, on='Jméno', how='left')
     df_zobr = pd.merge(df_zobr, df_skore, on='Jméno', how='left')
     df_zobr['Kategorie'] = df_zobr['Klub'].apply(urci_kategorii)
     
-    # Seřazení podle všech nominačních kritérií v přesném pořadí důležitosti
     df_zobr.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
     
     df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky']
@@ -150,7 +145,6 @@ if not df_historie.empty:
 st.subheader("Přidat / Upravit výsledky")
 zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Celková editovatelná tabulka"])
 
-# --- ZÁLOŽKA 1: NAHRÁVÁNÍ PDF ---
 with zalozka_pdf:
     st.info("Nahrajte PDF (např. ze Sprintu). Data se uloží a okamžitě předepíší do tabulky v druhé záložce.")
     nazev_zavodu_pdf = st.selectbox("Vyberte závod pro import z PDF:", POVOLENE_ZAVODY, key="pdf_zavod")
@@ -187,7 +181,6 @@ with zalozka_pdf:
         else:
             st.warning("V PDF se nepodařilo najít žádné platné výsledky.")
 
-# --- ZÁLOŽKA 2: CELKOVÁ EDITOVATELNÁ TABULKA ---
 with zalozka_rucne:
     if df_historie.empty:
         st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF.")
@@ -195,7 +188,10 @@ with zalozka_rucne:
         st.info("Zde vidíte předepsaná data z databáze. Doplňte chybějící výsledky a uložte vše najednou.")
         
         df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
-        df_pivot = df_historie.pivot_table(index='Jméno', columns='Závod', values='Pořadí/Čas', aggfunc='first').reset_index()
+        
+        # OPRAVA 2: Zde používáme bezpečný pivot pro textové hodnoty
+        df_pivot = df_historie.drop_duplicates(subset=['Jméno', 'Závod'], keep='last').pivot(index='Jméno', columns='Závod', values='Pořadí/Čas').reset_index()
+        
         df_master = pd.merge(df_unikatni, df_pivot, on='Jméno', how='left')
         
         for zavod in POVOLENE_ZAVODY:
@@ -241,7 +237,6 @@ with zalozka_rucne:
                 for zavod in POVOLENE_ZAVODY:
                     hodnota = str(radek.get(zavod, "")).strip()
                     
-                    # Odstranění otravného ".0" u celých čísel
                     if hodnota.endswith(".0"):
                         hodnota = hodnota[:-2]
                     
@@ -255,7 +250,7 @@ with zalozka_rucne:
                             "Závod": zavod,
                             "Pořadí/Čas": hodnota,
                             "Jméno": jmeno,
-                            "Klub": club,
+                            "Klub": klub,  # OPRAVA 3: opraven překlep z 'club' na 'klub'
                             "Získané body": body
                         })
             
