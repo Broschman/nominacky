@@ -101,8 +101,42 @@ def spocitej_skore_a_kriteria(df_zavodnik):
         'Tie3_Stredni': body_stredni
     })
 
+def format_body(val):
+    """Odstraní nevzhledná desetinná místa u celých čísel"""
+    if pd.isna(val) or str(val).strip() == "":
+        return ""
+    try:
+        return str(int(float(val)))
+    except ValueError:
+        return str(val)
+
+def style_dropped_race(row):
+    """Pandas Styler: Najde třetí nejhorší OB závod a vizuálně ho přeškrtne."""
+    ob_cols = ["Sprint", "Střední trať (krátká)", "Dlouhá trať (klasika)"]
+    styles = pd.Series('', index=row.index)
+    
+    ob_scores = []
+    # Posbíráme všechny platné body z OB závodů pro daného závodníka
+    for col in ob_cols:
+        if col in row.index:
+            val = row[col]
+            if val != "":
+                try:
+                    ob_scores.append((col, float(val)))
+                except ValueError:
+                    pass
+    
+    # Škrtáme pouze v případě, že běžel všechny 3 OB závody
+    if len(ob_scores) == 3:
+        # Najdeme závod s nejmenším počtem bodů
+        min_col = min(ob_scores, key=lambda x: x[1])[0]
+        # Přidáme CSS styl pro přeškrtnutí a zešednutí
+        styles[min_col] = 'text-decoration: line-through; color: #a8a8a8;'
+        
+    return styles
+
 st.title("Nominační žebříček JMS 2026")
-st.write("Aplikace automaticky předepisuje již uložená data do editovatelných tabulek.")
+st.write("Aplikace automaticky předepisuje již uložená data a škrtá nejhorší závod.")
 
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
@@ -118,7 +152,6 @@ if not df_historie.empty:
     df_skore = df_historie.groupby('Jméno').apply(spocitej_skore_a_kriteria).reset_index()
     df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
     
-    # OPRAVA 1: Používáme pivot místo pivot_table
     df_pivot_zobr = df_historie.drop_duplicates(subset=['Jméno', 'Závod'], keep='last').pivot(index='Jméno', columns='Závod', values='Získané body').reset_index()
     
     df_zobr = pd.merge(df_unikatni, df_pivot_zobr, on='Jméno', how='left')
@@ -127,18 +160,31 @@ if not df_historie.empty:
     
     df_zobr.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
     
+    # Formátování čísel (zbavíme se .0)
+    for col in POVOLENE_ZAVODY + ['Celkové body']:
+        if col in df_zobr.columns:
+            df_zobr[col] = df_zobr[col].apply(format_body)
+    
     df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky']
     df_juniori = df_zobr[df_zobr['Kategorie'] == 'Junioři']
     
     sloupce_skryt = ['Kategorie', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni']
     
+    # Vyčištění tabulek před zobrazením
+    df_juniorky_display = df_juniorky.drop(columns=sloupce_skryt).fillna("")
+    df_juniori_display = df_juniori.drop(columns=sloupce_skryt).fillna("")
+    
+    # APLIKACE STYLU: Předáme tabulku do Styleru, který přeškrtne nejhorší závod
+    styled_juniorky = df_juniorky_display.style.apply(style_dropped_race, axis=1)
+    styled_juniori = df_juniori_display.style.apply(style_dropped_race, axis=1)
+    
     sloupec_holky, sloupec_kluci = st.columns(2)
     with sloupec_holky:
         st.subheader("Dívky (Juniorky)")
-        st.dataframe(df_juniorky.drop(columns=sloupce_skryt), width="stretch", hide_index=True)
+        st.dataframe(styled_juniorky, width="stretch", hide_index=True)
     with sloupec_kluci:
         st.subheader("Chlapci (Junioři)")
-        st.dataframe(df_juniori.drop(columns=sloupce_skryt), width="stretch", hide_index=True)
+        st.dataframe(styled_juniori, width="stretch", hide_index=True)
     
     st.divider()
 
@@ -188,10 +234,7 @@ with zalozka_rucne:
         st.info("Zde vidíte předepsaná data z databáze. Doplňte chybějící výsledky a uložte vše najednou.")
         
         df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
-        
-        # OPRAVA 2: Zde používáme bezpečný pivot pro textové hodnoty
         df_pivot = df_historie.drop_duplicates(subset=['Jméno', 'Závod'], keep='last').pivot(index='Jméno', columns='Závod', values='Pořadí/Čas').reset_index()
-        
         df_master = pd.merge(df_unikatni, df_pivot, on='Jméno', how='left')
         
         for zavod in POVOLENE_ZAVODY:
@@ -234,27 +277,4 @@ with zalozka_rucne:
                 jmeno = radek["Jméno"]
                 klub = radek["Klub"]
                 
-                for zavod in POVOLENE_ZAVODY:
-                    hodnota = str(radek.get(zavod, "")).strip()
-                    
-                    if hodnota.endswith(".0"):
-                        hodnota = hodnota[:-2]
-                    
-                    if hodnota != "" and hodnota != "nan":
-                        if zavod == "Dráhový test":
-                            body = ziskej_body_za_drahu(hodnota, klub)
-                        else:
-                            body = ziskej_body_za_umisteni(hodnota)
-                            
-                        nova_data.append({
-                            "Závod": zavod,
-                            "Pořadí/Čas": hodnota,
-                            "Jméno": jmeno,
-                            "Klub": klub,  # OPRAVA 3: opraven překlep z 'club' na 'klub'
-                            "Získané body": body
-                        })
-            
-            df_nove_komplet = pd.DataFrame(nova_data)
-            df_nove_komplet.to_csv(SOUBOR_DATA, index=False)
-            st.success("Všechny změny byly úspěšně uloženy a žebříček byl přepočítán!")
-            st.rerun()
+                for zavod in POVOLENE
