@@ -25,7 +25,7 @@ def urci_kategorii(klub):
 def ziskej_body_za_umisteni(poradi):
     if pd.isna(poradi) or str(poradi).strip() == "": return 0
     try:
-        poradi = int(float(poradi)) # Ochrana proti desetinným číslům jako '1.0'
+        poradi = int(float(poradi))
     except ValueError:
         return 0
         
@@ -72,9 +72,12 @@ def ziskej_body_za_drahu(cas_str, klub):
 st.title("Nominační žebříček JMS 2026")
 st.write("Aplikace ukládá průběžné výsledky. Po zavření okna o data nepřijdete.")
 
-# NAČTENÍ HISTORIE
+# NAČTENÍ HISTORIE A OPRAVA STARÝCH DAT
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
+    # Zpětná kompatibilita: Pokud CSV obsahuje starý název sloupce, přejmenujeme ho
+    if "Pořadí" in df_historie.columns and "Pořadí/Čas" not in df_historie.columns:
+        df_historie.rename(columns={"Pořadí": "Pořadí/Čas"}, inplace=True)
 else:
     df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
 
@@ -91,10 +94,11 @@ if not df_historie.empty:
     sloupec_holky, sloupec_kluci = st.columns(2)
     with sloupec_holky:
         st.subheader("Dívky (Juniorky)")
-        st.dataframe(df_juniorky.drop(columns=['Kategorie']), use_container_width=True, hide_index=True)
+        # Moderní zápis: width="stretch" místo use_container_width=True
+        st.dataframe(df_juniorky.drop(columns=['Kategorie']), width="stretch", hide_index=True)
     with sloupec_kluci:
         st.subheader("Chlapci (Junioři)")
-        st.dataframe(df_juniori.drop(columns=['Kategorie']), use_container_width=True, hide_index=True)
+        st.dataframe(df_juniori.drop(columns=['Kategorie']), width="stretch", hide_index=True)
     
     st.divider()
 
@@ -130,7 +134,6 @@ with zalozka_pdf:
                         })
         if zavodnici:
             df_nove = pd.DataFrame(zavodnici)
-            # Pokud už výsledek ze závodu existuje, přepíšeme ho (aby se PDF neduplikovalo)
             if not df_historie.empty:
                 df_historie = df_historie[df_historie['Závod'] != nazev_zavodu_pdf]
             df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
@@ -147,35 +150,26 @@ with zalozka_rucne:
     else:
         st.info("Zde vidíte všechny závodníky. Doplňte chybějící časy (ve formátu MM:SS) nebo umístění a vše najednou uložte. Jméno a Klub jsou uzamčeny.")
         
-        # 1. Extrakce unikátních závodníků
         df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
-        
-        # 2. Vytvoření široké (kontingenční) tabulky pro snadnou editaci
         df_pivot = df_historie.pivot_table(index='Jméno', columns='Závod', values='Pořadí/Čas', aggfunc='first').reset_index()
         
-        # Spojení jmen+klubů se závody
         df_master = pd.merge(df_unikatni, df_pivot, on='Jméno', how='left')
         
-        # Zajištění, že všechny sloupce závodů existují, i když se ještě neběžely
         for zavod in POVOLENE_ZAVODY:
             if zavod not in df_master.columns:
                 df_master[zavod] = ""
                 
-        # Uspořádání sloupců a nahrazení chybějících hodnot (NaN) za prázdný text
         sloupce = ["Jméno", "Klub"] + POVOLENE_ZAVODY
         df_master = df_master[sloupce].fillna("")
         df_master.sort_values("Jméno", inplace=True)
 
-        # 3. Zobrazení editovatelné tabulky
         edited_df = st.data_editor(
             df_master,
-            # Zakážeme úpravu těchto dvou sloupců, aby si uživatel nerozbil databázi
             disabled=["Jméno", "Klub"],
-            use_container_width=True,
+            width="stretch", # Moderní zápis pro šířku tabulky
             hide_index=True
         )
         
-        # 4. Uložení - rozsekání široké tabulky zpět na dlouhý databázový formát
         if st.button("Uložit všechny úpravy z tabulky"):
             nova_data = []
             
@@ -183,12 +177,10 @@ with zalozka_rucne:
                 jmeno = radek["Jméno"]
                 klub = radek["Klub"]
                 
-                # Projdeme všechny 4 možné závody u daného člověka
                 for zavod in POVOLENE_ZAVODY:
                     hodnota = str(radek.get(zavod, "")).strip()
                     
                     if hodnota != "" and hodnota != "nan":
-                        # Výpočet bodů za daný závod
                         if zavod == "Dráhový test":
                             body = ziskej_body_za_drahu(hodnota, klub)
                         else:
@@ -202,7 +194,6 @@ with zalozka_rucne:
                             "Získané body": body
                         })
             
-            # Kompletní přepsání databáze novými, aktuálními daty z tabulky
             df_nove_komplet = pd.DataFrame(nova_data)
             df_nove_komplet.to_csv(SOUBOR_DATA, index=False)
             st.success("Všechny změny byly úspěšně uloženy!")
