@@ -15,8 +15,8 @@ POVOLENE_ZAVODY = [
 
 # --- POMOCNÉ FUNKCE ---
 def urci_kategorii(klub):
-    # Ošetření výjimek, které nesplňují standardní číslování
-    vyjimky_holky = ["UOL0740"]
+    # Definice výjimek pro registrační čísla dívek, která nesplňují standardní formát
+    vyjimky_holky = ["UOL0740", "SJ10750", "SJI0750"]
     klub_upraveny = str(klub).strip()
     if klub_upraveny in vyjimky_holky:
         return "Juniorky"
@@ -24,7 +24,7 @@ def urci_kategorii(klub):
     match = re.search(r"\d{4}$", klub_upraveny)
     if match:
         id_cislo = int(match.group(0)[2:4])
-        # Holky mají ID 50 a vyšší (opraveno na >=)
+        # Dívky mají třetí a čtvrté číslo v registraci 50 a vyšší
         if id_cislo >= 50:
             return "Juniorky"
     return "Junioři"
@@ -77,7 +77,7 @@ def ziskej_body_za_drahu(cas_str, klub):
         else: return 0
 
 def spocitej_skore_a_kriteria(df_zavodnik):
-    """Algoritmus pro výpočet finálního skóre a pomocných kritérií při shodě."""
+    """Algoritmus počítá celkové skóre (dráha + 2 nejlepší OB) a tie-breakery."""
     body_draha = 0
     body_ob = []
     body_stredni = 0
@@ -91,14 +91,13 @@ def spocitej_skore_a_kriteria(df_zavodnik):
             if radek["Závod"] == "Střední trať (krátká)":
                 body_stredni = body
 
-    # Seřadíme OB výsledky sestupně a vezmeme dva nejlepší
+    # Výběr dvou nejlepších výsledků z OB závodů
     body_ob.sort(reverse=True)
     soucet_dvou_ob = sum(body_ob[:2])
     nejlepsi_ob = body_ob[0] if len(body_ob) > 0 else 0
     
     celkove_skore = body_draha + soucet_dvou_ob
 
-    # Vracíme sérii s klíči pro dokonalé řazení
     return pd.Series({
         'Celkové body': celkove_skore,
         'Tie1_OB2': soucet_dvou_ob,
@@ -106,10 +105,11 @@ def spocitej_skore_a_kriteria(df_zavodnik):
         'Tie3_Stredni': body_stredni
     })
 
+# --- HLAVNÍ STRÁNKA STREAMLITU ---
 st.title("Nominační žebříček JMS 2026")
-st.write("Aplikace ukládá průběžné výsledky a řadí závodníky podle oficiálních kritérií.")
+st.write("Aplikace automaticky předepisuje již uložená data do editovatelných tabulek.")
 
-# NAČTENÍ HISTORIE A OPRAVA STARÝCH DAT
+# Načtení databáze
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
     if "Pořadí" in df_historie.columns and "Pořadí/Čas" not in df_historie.columns:
@@ -117,30 +117,24 @@ if os.path.exists(SOUBOR_DATA):
 else:
     df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
 
-# --- ZOBRAZENÍ HLAVNÍCH TABULEK (HOLKY / KLUCI) ---
+# Zobrazení žebříčků na hlavní stránce
 if not df_historie.empty:
     st.header("Aktuální nominační žebříček")
     
-    # Výpočet finálního skóre a tie-breakerů
     df_skore = df_historie.groupby('Jméno').apply(spocitej_skore_a_kriteria).reset_index()
-    
-    # Příprava široké tabulky pro hezké zobrazení
     df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
     df_pivot_zobr = df_historie.pivot_table(index='Jméno', columns='Závod', values='Získané body', aggfunc='first').reset_index()
     
-    # Spojení všeho dohromady
     df_zobr = pd.merge(df_unikatni, df_pivot_zobr, on='Jméno', how='left')
     df_zobr = pd.merge(df_zobr, df_skore, on='Jméno', how='left')
     df_zobr['Kategorie'] = df_zobr['Klub'].apply(urci_kategorii)
     
-    # Uspořádání a seřazení od nejlepšího podle všech kritérií
+    # Seřazení podle všech nominačních kritérií v přesném pořadí důležitosti
     df_zobr.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
     
-    # Rozdělení na kluky a holky
     df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky']
     df_juniori = df_zobr[df_zobr['Kategorie'] == 'Junioři']
     
-    # Skryjeme pomocné sloupce pro čistý vzhled
     sloupce_skryt = ['Kategorie', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni']
     
     sloupec_holky, sloupec_kluci = st.columns(2)
@@ -154,12 +148,11 @@ if not df_historie.empty:
     st.divider()
 
 st.subheader("Přidat / Upravit výsledky")
-
 zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Celková editovatelná tabulka"])
 
 # --- ZÁLOŽKA 1: NAHRÁVÁNÍ PDF ---
 with zalozka_pdf:
-    st.info("Při prvním nahrání PDF (např. Sprint) se závodníci uloží. Ostatní závody pak můžete jen dopsat ve druhé záložce.")
+    st.info("Nahrajte PDF (např. ze Sprintu). Data se uloží a okamžitě předepíší do tabulky v druhé záložce.")
     nazev_zavodu_pdf = st.selectbox("Vyberte závod pro import z PDF:", POVOLENE_ZAVODY, key="pdf_zavod")
     uploaded_file = st.file_uploader("Nahrajte PDF s výsledky", type="pdf")
     
@@ -199,7 +192,7 @@ with zalozka_rucne:
     if df_historie.empty:
         st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF.")
     else:
-        st.info("Zde vidíte všechny závodníky seřazené od nejlepšího. Doplňte časy (MM:SS) nebo umístění a uložte.")
+        st.info("Zde vidíte předepsaná data z databáze. Doplňte chybějící výsledky a uložte vše najednou.")
         
         df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
         df_pivot = df_historie.pivot_table(index='Jméno', columns='Závod', values='Pořadí/Čas', aggfunc='first').reset_index()
@@ -209,17 +202,13 @@ with zalozka_rucne:
             if zavod not in df_master.columns:
                 df_master[zavod] = ""
                 
-        # Přidáme výpočet celkových bodů pro řazení v editační tabulce
         df_skore_edit = df_historie.groupby('Jméno').apply(spocitej_skore_a_kriteria).reset_index()
         df_master = pd.merge(df_master, df_skore_edit, on='Jméno', how='left')
         df_master['Kategorie'] = df_master['Klub'].apply(urci_kategorii)
         
         sloupce = ["Jméno", "Klub", "Celkové body"] + POVOLENE_ZAVODY
-        
-        # Seřazení podle finálních pravidel
         df_master.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
         
-        # Rozdělení na kluky a holky
         df_master_holky = df_master[df_master['Kategorie'] == 'Juniorky'][sloupce].fillna("")
         df_master_kluci = df_master[df_master['Kategorie'] == 'Junioři'][sloupce].fillna("")
 
@@ -243,8 +232,6 @@ with zalozka_rucne:
         
         if st.button("Uložit všechny úpravy (pro obě kategorie)"):
             nova_data = []
-            
-            # Spojíme obě editované tabulky pro hromadné uložení
             edited_komplet = pd.concat([edited_holky, edited_kluci], ignore_index=True)
             
             for index, radek in edited_komplet.iterrows():
@@ -253,6 +240,10 @@ with zalozka_rucne:
                 
                 for zavod in POVOLENE_ZAVODY:
                     hodnota = str(radek.get(zavod, "")).strip()
+                    
+                    # Odstranění otravného ".0" u celých čísel
+                    if hodnota.endswith(".0"):
+                        hodnota = hodnota[:-2]
                     
                     if hodnota != "" and hodnota != "nan":
                         if zavod == "Dráhový test":
@@ -264,11 +255,11 @@ with zalozka_rucne:
                             "Závod": zavod,
                             "Pořadí/Čas": hodnota,
                             "Jméno": jmeno,
-                            "Klub": klub,
+                            "Klub": club,
                             "Získané body": body
                         })
             
             df_nove_komplet = pd.DataFrame(nova_data)
             df_nove_komplet.to_csv(SOUBOR_DATA, index=False)
-            st.success("Všechny změny byly úspěšně uloženy!")
+            st.success("Všechny změny byly úspěšně uloženy a žebříček byl přepočítán!")
             st.rerun()
