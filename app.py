@@ -277,4 +277,27 @@ with zalozka_rucne:
                 jmeno = radek["Jméno"]
                 klub = radek["Klub"]
                 
-                for zavod in POVOLENE
+                for zavod in POVOLENE_ZAVODY:
+                    hodnota = str(radek.get(zavod, "")).strip()
+                    
+                    if hodnota.endswith(".0"):
+                        hodnota = hodnota[:-2]
+                    
+                    if hodnota != "" and hodnota != "nan":
+                        if zavod == "Dráhový test":
+                            body = ziskej_body_za_drahu(hodnota, klub)
+                        else:
+                            body = ziskej_body_za_umisteni(hodnota)
+                            
+                        nova_data.append({
+                            "Závod": zavod,
+                            "Pořadí/Čas": hodnota,
+                            "Jméno": jmeno,
+                            "Klub": klub,
+                            "Získané body": body
+                        })
+            
+            df_nove_komplet = pd.DataFrame(nova_data)
+            df_nove_komplet.to_csv(SOUBOR_DATA, index=False)
+            st.success("Všechny změny byly úspěšně uloženy a žebříček byl přepočítán!")
+            st.rerun()
