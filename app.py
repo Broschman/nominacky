@@ -14,10 +14,18 @@ POVOLENE_ZAVODY = [
 ]
 
 # --- POMOCNÉ FUNKCE PRO VÝPOČET BODŮ ---
+def urci_kategorii(klub):
+    match = re.search(r"\d{4}$", str(klub).strip())
+    if match:
+        mesic = int(match.group(0)[2:4])
+        if mesic > 50:
+            return "Juniorky"
+    return "Junioři"
+
 def ziskej_body_za_umisteni(poradi):
-    if pd.isna(poradi): return 0
+    if pd.isna(poradi) or str(poradi).strip() == "": return 0
     try:
-        poradi = int(poradi)
+        poradi = int(float(poradi)) # Ochrana proti desetinným číslům jako '1.0'
     except ValueError:
         return 0
         
@@ -40,14 +48,9 @@ def ziskej_body_za_drahu(cas_str, klub):
     except ValueError:
         return 0
         
-    je_zena = False
-    match = re.search(r"\d{4}$", str(klub).strip())
-    if match:
-        mesic = int(match.group(0)[2:4])
-        if mesic > 50:
-            je_zena = True
+    kategorie = urci_kategorii(klub)
 
-    if je_zena: 
+    if kategorie == "Juniorky": 
         if sekundy <= 645: return 7       
         elif sekundy <= 655: return 6     
         elif sekundy <= 665: return 5     
@@ -69,35 +72,39 @@ def ziskej_body_za_drahu(cas_str, klub):
 st.title("Nominační žebříček JMS 2026")
 st.write("Aplikace ukládá průběžné výsledky. Po zavření okna o data nepřijdete.")
 
-# 1. NAČTENÍ HISTORIE A VYTVOŘENÍ SLOVNÍKU ZÁVODNÍKŮ
+# NAČTENÍ HISTORIE
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
 else:
     df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
 
-# Extrakce unikátních závodníků (Mapování: Jméno -> Klub)
-slovnik_zavodniku = {}
+# --- ZOBRAZENÍ TABULEK (HOLKY / KLUCI) ---
 if not df_historie.empty:
-    for index, radek in df_historie.iterrows():
-        # Uložíme si jméno a k němu odpovídající klub
-        slovnik_zavodniku[radek["Jméno"]] = radek["Klub"]
+    st.header("Průběžně uložená data v databázi")
+    
+    df_historie_zobr = df_historie.copy()
+    df_historie_zobr['Kategorie'] = df_historie_zobr['Klub'].apply(urci_kategorii)
+    
+    df_juniorky = df_historie_zobr[df_historie_zobr['Kategorie'] == 'Juniorky']
+    df_juniori = df_historie_zobr[df_historie_zobr['Kategorie'] == 'Junioři']
+    
+    sloupec_holky, sloupec_kluci = st.columns(2)
+    with sloupec_holky:
+        st.subheader("Dívky (Juniorky)")
+        st.dataframe(df_juniorky.drop(columns=['Kategorie']), use_container_width=True, hide_index=True)
+    with sloupec_kluci:
+        st.subheader("Chlapci (Junioři)")
+        st.dataframe(df_juniori.drop(columns=['Kategorie']), use_container_width=True, hide_index=True)
+    
+    st.divider()
 
-# Seznam jmen pro rolovací nabídku
-seznam_jmen = list(slovnik_zavodniku.keys())
-# Seřadíme jména podle abecedy pro lepší přehlednost
-seznam_jmen.sort()
+st.subheader("Přidat / Upravit výsledky")
 
-if not df_historie.empty:
-    st.subheader("Průběžně uložená data v databázi")
-    st.dataframe(df_historie, use_container_width=True)
-
-st.subheader("Přidat nové výsledky")
-
-zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Hromadné zadání (jako Excel)"])
+zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Celková editovatelná tabulka"])
 
 # --- ZÁLOŽKA 1: NAHRÁVÁNÍ PDF ---
 with zalozka_pdf:
-    st.info("Při prvním nahrání PDF (např. Sprint) se závodníci automaticky uloží a budou k dispozici pro ruční zadávání v druhé záložce.")
+    st.info("Při prvním nahrání PDF (např. Sprint) se závodníci uloží. Ostatní závody pak můžete jen dopsat ve druhé záložce.")
     nazev_zavodu_pdf = st.selectbox("Vyberte závod pro import z PDF:", POVOLENE_ZAVODY, key="pdf_zavod")
     uploaded_file = st.file_uploader("Nahrajte PDF s výsledky", type="pdf")
     
@@ -121,9 +128,11 @@ with zalozka_pdf:
                             "Klub": klub,
                             "Získané body": body
                         })
-        
         if zavodnici:
             df_nove = pd.DataFrame(zavodnici)
+            # Pokud už výsledek ze závodu existuje, přepíšeme ho (aby se PDF neduplikovalo)
+            if not df_historie.empty:
+                df_historie = df_historie[df_historie['Závod'] != nazev_zavodu_pdf]
             df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
             df_komplet.to_csv(SOUBOR_DATA, index=False)
             st.success(f"Výsledky z PDF pro závod '{nazev_zavodu_pdf}' byly uloženy!")
@@ -131,73 +140,70 @@ with zalozka_pdf:
         else:
             st.warning("V PDF se nepodařilo najít žádné platné výsledky.")
 
-# --- ZÁLOŽKA 2: RUČNÍ (HROMADNÉ) ZADÁVÁNÍ ---
+# --- ZÁLOŽKA 2: CELKOVÁ EDITOVATELNÁ TABULKA ---
 with zalozka_rucne:
-    if not seznam_jmen:
-        st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF, abych si zapamatoval jména a kluby.")
+    if df_historie.empty:
+        st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF.")
     else:
-        st.info("Vyberte jméno ze seznamu. Klub bude přidělen automaticky na pozadí podle naší databáze!")
+        st.info("Zde vidíte všechny závodníky. Doplňte chybějící časy (ve formátu MM:SS) nebo umístění a vše najednou uložte. Jméno a Klub jsou uzamčeny.")
         
-        nazev_zavodu_rucne = st.selectbox("Vyberte závod pro ruční zadání:", POVOLENE_ZAVODY, key="rucne_zavod")
+        # 1. Extrakce unikátních závodníků
+        df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
         
-        # Ostranili jsme sloupec "Klub", uživatel ho nemusí zadávat
-        if nazev_zavodu_rucne == "Dráhový test":
-            df_template = pd.DataFrame(columns=["Jméno", "Čas (MM:SS)"])
-        else:
-            df_template = pd.DataFrame(columns=["Jméno", "Pořadí"])
+        # 2. Vytvoření široké (kontingenční) tabulky pro snadnou editaci
+        df_pivot = df_historie.pivot_table(index='Jméno', columns='Závod', values='Pořadí/Čas', aggfunc='first').reset_index()
+        
+        # Spojení jmen+klubů se závody
+        df_master = pd.merge(df_unikatni, df_pivot, on='Jméno', how='left')
+        
+        # Zajištění, že všechny sloupce závodů existují, i když se ještě neběžely
+        for zavod in POVOLENE_ZAVODY:
+            if zavod not in df_master.columns:
+                df_master[zavod] = ""
+                
+        # Uspořádání sloupců a nahrazení chybějících hodnot (NaN) za prázdný text
+        sloupce = ["Jméno", "Klub"] + POVOLENE_ZAVODY
+        df_master = df_master[sloupce].fillna("")
+        df_master.sort_values("Jméno", inplace=True)
 
-        # 2. NASTAVENÍ SLOUPCE "Jméno" JAKO VÝBĚROVÉHO SEZNAMU (Selectbox)
-        konfigurace_sloupcu = {
-            "Jméno": st.column_config.SelectboxColumn(
-                "Jméno závodníka",
-                help="Vyberte jméno z nabídky",
-                width="medium",
-                options=seznam_jmen,
-                required=True
-            )
-        }
-
+        # 3. Zobrazení editovatelné tabulky
         edited_df = st.data_editor(
-            df_template, 
-            num_rows="dynamic", 
+            df_master,
+            # Zakážeme úpravu těchto dvou sloupců, aby si uživatel nerozbil databázi
+            disabled=["Jméno", "Klub"],
             use_container_width=True,
-            column_config=konfigurace_sloupcu
+            hide_index=True
         )
         
-        if st.button("Uložit všechny výsledky z tabulky"):
-            edited_df.dropna(how='all', inplace=True)
+        # 4. Uložení - rozsekání široké tabulky zpět na dlouhý databázový formát
+        if st.button("Uložit všechny úpravy z tabulky"):
+            nova_data = []
             
-            if edited_df.empty:
-                st.warning("Tabulka je prázdná, není co uložit.")
-            else:
-                zavodnici_rucne = []
-                for index, radek in edited_df.iterrows():
-                    jmeno = radek.get("Jméno", "")
+            for index, radek in edited_df.iterrows():
+                jmeno = radek["Jméno"]
+                klub = radek["Klub"]
+                
+                # Projdeme všechny 4 možné závody u daného člověka
+                for zavod in POVOLENE_ZAVODY:
+                    hodnota = str(radek.get(zavod, "")).strip()
                     
-                    if pd.notna(jmeno) and jmeno != "":
-                        # 3. AUTOMATICKÉ DOPLNĚNÍ KLUBU Z NAŠEHO SLOVNÍKU
-                        klub = slovnik_zavodniku.get(jmeno, "Neznámý")
-                        
-                        if nazev_zavodu_rucne == "Dráhový test":
-                            cas_str = str(radek.get("Čas (MM:SS)", ""))
-                            body = ziskej_body_za_drahu(cas_str, klub)
-                            hodnota_zaznamu = cas_str
+                    if hodnota != "" and hodnota != "nan":
+                        # Výpočet bodů za daný závod
+                        if zavod == "Dráhový test":
+                            body = ziskej_body_za_drahu(hodnota, klub)
                         else:
-                            poradi = radek.get("Pořadí")
-                            body = ziskej_body_za_umisteni(poradi)
-                            hodnota_zaznamu = str(poradi)
-
-                        zavodnici_rucne.append({
-                            "Závod": nazev_zavodu_rucne,
-                            "Pořadí/Čas": hodnota_zaznamu,
+                            body = ziskej_body_za_umisteni(hodnota)
+                            
+                        nova_data.append({
+                            "Závod": zavod,
+                            "Pořadí/Čas": hodnota,
                             "Jméno": jmeno,
                             "Klub": klub,
                             "Získané body": body
                         })
-                
-                if zavodnici_rucne:
-                    df_nove = pd.DataFrame(zavodnici_rucne)
-                    df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
-                    df_komplet.to_csv(SOUBOR_DATA, index=False)
-                    st.success(f"Všechny výsledky pro '{nazev_zavodu_rucne}' byly úspěšně uloženy!")
-                    st.rerun()
+            
+            # Kompletní přepsání databáze novými, aktuálními daty z tabulky
+            df_nove_komplet = pd.DataFrame(nova_data)
+            df_nove_komplet.to_csv(SOUBOR_DATA, index=False)
+            st.success("Všechny změny byly úspěšně uloženy!")
+            st.rerun()
