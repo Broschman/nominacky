@@ -6,6 +6,7 @@ import os
 
 SOUBOR_DATA = "vysledky_jms.csv"
 
+# Zde definované pořadí se nyní striktně propíše do všech tabulek
 POVOLENE_ZAVODY = [
     "Sprint", 
     "Dráhový test", 
@@ -110,18 +111,15 @@ def format_body(val):
         return str(val)
 
 def style_table(row):
-    """Zvýrazní TOP 4 zeleně, 5.-6. místo žlutě a přeškrtne nejhorší závod."""
     styles = [''] * len(row)
     
-    # 1. Zvýraznění pozic podle reprezentačních kritérií
+    # 1. Zvýraznění pozic
     if 'Pořadí' in row.index:
         try:
             poradi = int(str(row['Pořadí']).replace('.', ''))
             if poradi <= 4:
-                # Přímá nominace (jasně zelená)
                 styles = ['background-color: rgba(46, 204, 113, 0.3);'] * len(row)
             elif poradi <= 6:
-                # Volba realizačního týmu (žlutá/oranžová)
                 styles = ['background-color: rgba(241, 196, 15, 0.2);'] * len(row)
         except ValueError:
             pass
@@ -168,6 +166,11 @@ if not df_historie.empty:
     
     df_zobr.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
     
+    # Zajištění, že všechny sloupce závodů existují, i když se ještě neběžely
+    for zavod in POVOLENE_ZAVODY:
+        if zavod not in df_zobr.columns:
+            df_zobr[zavod] = ""
+            
     for col in POVOLENE_ZAVODY + ['Celkové body']:
         if col in df_zobr.columns:
             df_zobr[col] = df_zobr[col].apply(format_body)
@@ -183,10 +186,12 @@ if not df_historie.empty:
     df_juniori.insert(0, 'Pořadí', range(1, len(df_juniori) + 1))
     df_juniori['Pořadí'] = df_juniori['Pořadí'].astype(str) + "."
     
-    sloupce_skryt = ['Kategorie', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni']
+    # 1. Definujeme si striktní pořadí sloupců pro zobrazení
+    pozadovane_sloupce = ['Pořadí', 'Jméno', 'Klub', 'Celkové body'] + POVOLENE_ZAVODY
     
-    df_juniorky_display = df_juniorky.drop(columns=sloupce_skryt).fillna("")
-    df_juniori_display = df_juniori.drop(columns=sloupce_skryt).fillna("")
+    # 2. Aplikujeme toto pořadí na tabulky
+    df_juniorky_display = df_juniorky[pozadovane_sloupce].fillna("")
+    df_juniori_display = df_juniori[pozadovane_sloupce].fillna("")
     
     styled_juniorky = df_juniorky_display.style.apply(style_table, axis=1)
     styled_juniori = df_juniori_display.style.apply(style_table, axis=1)
@@ -261,6 +266,7 @@ with zalozka_rucne:
         df_master = pd.merge(df_master, df_skore_edit, on='Jméno', how='left')
         df_master['Kategorie'] = df_master['Klub'].apply(urci_kategorii)
         
+        # Zde už jsme měli pořadí nastavené správně
         sloupce = ["Jméno", "Klub", "Celkové body"] + POVOLENE_ZAVODY
         df_master.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
         
