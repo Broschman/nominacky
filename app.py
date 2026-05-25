@@ -5,36 +5,21 @@ import re
 import os
 
 SOUBOR_DATA = "vysledky_jms.csv"
+POVOLENE_ZAVODY = ["Sprint", "Dráhový test", "Střední trať (krátká)", "Dlouhá trať (klasika)"]
 
-# Zde definované pořadí se nyní striktně propíše do všech tabulek
-POVOLENE_ZAVODY = [
-    "Sprint", 
-    "Dráhový test", 
-    "Střední trať (krátká)", 
-    "Dlouhá trať (klasika)"
-]
-
-# --- POMOCNÉ FUNKCE ---
+# --- POMOCNÉ FUNKCE (zůstávají stejné) ---
 def urci_kategorii(klub):
     vyjimky_holky = ["UOL0740", "SJ10750", "SJI0750"]
     klub_upraveny = str(klub).strip()
-    if klub_upraveny in vyjimky_holky:
-        return "Juniorky"
-
+    if klub_upraveny in vyjimky_holky: return "Juniorky"
     match = re.search(r"\d{4}$", klub_upraveny)
-    if match:
-        id_cislo = int(match.group(0)[2:4])
-        if id_cislo >= 50:
-            return "Juniorky"
+    if match and int(match.group(0)[2:4]) >= 50: return "Juniorky"
     return "Junioři"
 
 def ziskej_body_za_umisteni(poradi):
     if pd.isna(poradi) or str(poradi).strip() == "": return 0
-    try:
-        poradi = int(float(poradi))
-    except ValueError:
-        return 0
-        
+    try: poradi = int(float(poradi))
+    except ValueError: return 0
     if poradi == 1: return 11
     elif poradi == 2: return 9
     elif poradi == 3: return 7
@@ -45,165 +30,122 @@ def ziskej_body_za_umisteni(poradi):
     else: return 0
 
 def ziskej_body_za_drahu(cas_str, klub):
-    if not isinstance(cas_str, str) or ":" not in cas_str:
-        return 0
-    
+    if not isinstance(cas_str, str) or ":" not in cas_str: return 0
     casti = cas_str.split(':')
-    try:
-        sekundy = int(casti[0]) * 60 + int(casti[1])
-    except ValueError:
-        return 0
-        
+    try: sekundy = int(casti[0]) * 60 + int(casti[1])
+    except ValueError: return 0
     kategorie = urci_kategorii(klub)
-
-    if kategorie == "Juniorky": 
-        if sekundy <= 645: return 7       
-        elif sekundy <= 655: return 6     
-        elif sekundy <= 665: return 5     
-        elif sekundy <= 675: return 4     
-        elif sekundy <= 685: return 3     
-        elif sekundy <= 695: return 2     
-        elif sekundy <= 705: return 1     
+    if kategorie == "Juniorky":
+        if sekundy <= 645: return 7
+        elif sekundy <= 655: return 6
+        elif sekundy <= 665: return 5
+        elif sekundy <= 675: return 4
+        elif sekundy <= 685: return 3
+        elif sekundy <= 695: return 2
+        elif sekundy <= 705: return 1
         else: return 0
-    else: 
-        if sekundy <= 535: return 7       
-        elif sekundy <= 545: return 6     
-        elif sekundy <= 555: return 5     
-        elif sekundy <= 565: return 4     
-        elif sekundy <= 575: return 3     
-        elif sekundy <= 585: return 2     
-        elif sekundy <= 595: return 1     
+    else:
+        if sekundy <= 535: return 7
+        elif sekundy <= 545: return 6
+        elif sekundy <= 555: return 5
+        elif sekundy <= 565: return 4
+        elif sekundy <= 575: return 3
+        elif sekundy <= 585: return 2
+        elif sekundy <= 595: return 1
         else: return 0
 
 def spocitej_skore_a_kriteria(df_zavodnik):
     body_draha = 0
     body_ob = []
     body_stredni = 0
-
     for index, radek in df_zavodnik.iterrows():
         body = radek["Získané body"]
-        if radek["Závod"] == "Dráhový test":
-            body_draha += body
+        if radek["Závod"] == "Dráhový test": body_draha += body
         else:
             body_ob.append(body)
-            if radek["Závod"] == "Střední trať (krátká)":
-                body_stredni = body
-
+            if radek["Závod"] == "Střední trať (krátká)": body_stredni = body
     body_ob.sort(reverse=True)
     soucet_dvou_ob = sum(body_ob[:2])
     nejlepsi_ob = body_ob[0] if len(body_ob) > 0 else 0
-    
-    celkove_skore = body_draha + soucet_dvou_ob
-
-    return pd.Series({
-        'Celkové body': celkove_skore,
-        'Tie1_OB2': soucet_dvou_ob,
-        'Tie2_OBmax': nejlepsi_ob,
-        'Tie3_Stredni': body_stredni
-    })
+    return pd.Series({'Celkové body': body_draha + soucet_dvou_ob, 'Tie1_OB2': soucet_dvou_ob, 'Tie2_OBmax': nejlepsi_ob, 'Tie3_Stredni': body_stredni})
 
 def format_body(val):
-    if pd.isna(val) or str(val).strip() == "":
-        return ""
-    try:
-        return str(int(float(val)))
-    except ValueError:
-        return str(val)
+    if pd.isna(val) or str(val).strip() == "": return ""
+    try: return str(int(float(val)))
+    except ValueError: return str(val)
 
 def style_table(row):
     styles = [''] * len(row)
-    
-    # 1. Zvýraznění pozic
     if 'Pořadí' in row.index:
         try:
             poradi = int(str(row['Pořadí']).replace('.', ''))
-            if poradi <= 4:
-                styles = ['background-color: rgba(46, 204, 113, 0.3);'] * len(row)
-            elif poradi <= 6:
-                styles = ['background-color: rgba(241, 196, 15, 0.2);'] * len(row)
-        except ValueError:
-            pass
-            
-    # 2. Přeškrtnutí nejhoršího závodu v OB
+            if poradi <= 4: styles = ['background-color: rgba(46, 204, 113, 0.3);'] * len(row)
+            elif poradi <= 6: styles = ['background-color: rgba(241, 196, 15, 0.2);'] * len(row)
+        except ValueError: pass
     ob_cols = ["Sprint", "Střední trať (krátká)", "Dlouhá trať (klasika)"]
     ob_scores = []
     for col in ob_cols:
         if col in row.index and str(row[col]).strip() != "":
-            try:
-                ob_scores.append((col, float(row[col])))
-            except ValueError:
-                pass
-                
+            try: ob_scores.append((col, float(row[col])))
+            except ValueError: pass
     if len(ob_scores) == 3:
         min_col = min(ob_scores, key=lambda x: x[1])[0]
         col_idx = row.index.get_loc(min_col)
         styles[col_idx] += ' text-decoration: line-through; color: #a8a8a8;'
-        
     return styles
 
+# --- HLAVNÍ LOGIKA ---
 st.title("Nominační žebříček JMS 2026")
-st.write("Aplikace řadí závodníky, barví přímou nominaci (1.-4.) i širší výběr (5.-6.) a škrtá nejhorší závod.")
 
 if os.path.exists(SOUBOR_DATA):
-    df_historie = pd.read_csv(SOUBOR_DATA)
-    if "Pořadí" in df_historie.columns and "Pořadí/Čas" not in df_historie.columns:
-        df_historie.rename(columns={"Pořadí": "Pořadí/Čas"}, inplace=True)
+    df_real = pd.read_csv(SOUBOR_DATA)
+    if "Pořadí" in df_real.columns and "Pořadí/Čas" not in df_real.columns:
+        df_real.rename(columns={"Pořadí": "Pořadí/Čas"}, inplace=True)
 else:
-    df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
+    df_real = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
 
-# --- ZOBRAZENÍ HLAVNÍCH TABULEK ---
-if not df_historie.empty:
-    st.header("Aktuální nominační žebříček")
-    
-    df_skore = df_historie.groupby('Jméno').apply(spocitej_skore_a_kriteria).reset_index()
-    df_unikatni = df_historie[['Jméno', 'Klub']].drop_duplicates()
-    
-    df_pivot_zobr = df_historie.drop_duplicates(subset=['Jméno', 'Závod'], keep='last').pivot(index='Jméno', columns='Závod', values='Získané body').reset_index()
+# SIMULACE: Přepínač a logika
+if 'sim_mode' not in st.session_state: st.session_state.sim_mode = False
+sim_mode = st.toggle("Zapnout režim SIMULACE (What-if)", value=st.session_state.sim_mode)
+st.session_state.sim_mode = sim_mode
+
+if sim_mode:
+    st.warning("⚠️ JSI V REŽIMU SIMULACE! Data se neukládají do ostré databáze.")
+    if 'df_sim' not in st.session_state: st.session_state.df_sim = df_real.copy()
+    df_source = st.session_state.df_sim
+else:
+    df_source = df_real
+
+# --- ZOBRAZENÍ TABULEK ---
+if not df_source.empty:
+    df_skore = df_source.groupby('Jméno').apply(spocitej_skore_a_kriteria).reset_index()
+    df_unikatni = df_source[['Jméno', 'Klub']].drop_duplicates()
+    df_pivot_zobr = df_source.drop_duplicates(subset=['Jméno', 'Závod'], keep='last').pivot(index='Jméno', columns='Závod', values='Získané body').reset_index()
     
     df_zobr = pd.merge(df_unikatni, df_pivot_zobr, on='Jméno', how='left')
     df_zobr = pd.merge(df_zobr, df_skore, on='Jméno', how='left')
     df_zobr['Kategorie'] = df_zobr['Klub'].apply(urci_kategorii)
-    
     df_zobr.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
     
-    # Zajištění, že všechny sloupce závodů existují, i když se ještě neběžely
-    for zavod in POVOLENE_ZAVODY:
-        if zavod not in df_zobr.columns:
-            df_zobr[zavod] = ""
-            
     for col in POVOLENE_ZAVODY + ['Celkové body']:
-        if col in df_zobr.columns:
-            df_zobr[col] = df_zobr[col].apply(format_body)
+        if col in df_zobr.columns: df_zobr[col] = df_zobr[col].apply(format_body)
     
-    df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky'].copy()
-    df_juniori = df_zobr[df_zobr['Kategorie'] == 'Junioři'].copy()
-    
-    df_juniorky = df_juniorky.reset_index(drop=True)
-    df_juniorky.insert(0, 'Pořadí', range(1, len(df_juniorky) + 1))
-    df_juniorky['Pořadí'] = df_juniorky['Pořadí'].astype(str) + "."
+    def process_category(cat):
+        df_cat = df_zobr[df_zobr['Kategorie'] == cat].copy().reset_index(drop=True)
+        df_cat.insert(0, 'Pořadí', range(1, len(df_cat) + 1))
+        df_cat['Pořadí'] = df_cat['Pořadí'].astype(str) + "."
+        return df_cat.drop(columns=['Kategorie', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni']).fillna("")
 
-    df_juniori = df_juniori.reset_index(drop=True)
-    df_juniori.insert(0, 'Pořadí', range(1, len(df_juniori) + 1))
-    df_juniori['Pořadí'] = df_juniori['Pořadí'].astype(str) + "."
+    styled_juniorky = process_category('Juniorky').style.apply(style_table, axis=1)
+    styled_juniori = process_category('Junioři').style.apply(style_table, axis=1)
     
-    # 1. Definujeme si striktní pořadí sloupců pro zobrazení
-    pozadovane_sloupce = ['Pořadí', 'Jméno', 'Klub', 'Celkové body'] + POVOLENE_ZAVODY
-    
-    # 2. Aplikujeme toto pořadí na tabulky
-    df_juniorky_display = df_juniorky[pozadovane_sloupce].fillna("")
-    df_juniori_display = df_juniori[pozadovane_sloupce].fillna("")
-    
-    styled_juniorky = df_juniorky_display.style.apply(style_table, axis=1)
-    styled_juniori = df_juniori_display.style.apply(style_table, axis=1)
-    
-    sloupec_holky, sloupec_kluci = st.columns(2)
-    with sloupec_holky:
-        st.subheader("Dívky (Juniorky)")
+    cols = st.columns(2)
+    with cols[0]:
+        st.subheader("Juniorky")
         st.dataframe(styled_juniorky, width="stretch", hide_index=True)
-    with sloupec_kluci:
-        st.subheader("Chlapci (Junioři)")
+    with cols[1]:
+        st.subheader("Junioři")
         st.dataframe(styled_juniori, width="stretch", hide_index=True)
-    
     st.divider()
 
 st.subheader("Přidat / Upravit výsledky")
