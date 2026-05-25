@@ -110,19 +110,23 @@ def format_body(val):
         return str(val)
 
 def style_table(row):
-    """Zvýrazní prvních 6 a přeškrtne nejhorší závod."""
+    """Zvýrazní TOP 4 zeleně, 5.-6. místo žlutě a přeškrtne nejhorší závod."""
     styles = [''] * len(row)
     
-    # 1. Zvýraznění TOP 6
+    # 1. Zvýraznění pozic podle reprezentačních kritérií
     if 'Pořadí' in row.index:
         try:
             poradi = int(str(row['Pořadí']).replace('.', ''))
-            if poradi <= 6:
-                styles = ['background-color: rgba(46, 204, 113, 0.2);'] * len(row)
+            if poradi <= 4:
+                # Přímá nominace (jasně zelená)
+                styles = ['background-color: rgba(46, 204, 113, 0.3);'] * len(row)
+            elif poradi <= 6:
+                # Volba realizačního týmu (žlutá/oranžová)
+                styles = ['background-color: rgba(241, 196, 15, 0.2);'] * len(row)
         except ValueError:
             pass
             
-    # 2. Přeškrtnutí nejhoršího závodu
+    # 2. Přeškrtnutí nejhoršího závodu v OB
     ob_cols = ["Sprint", "Střední trať (krátká)", "Dlouhá trať (klasika)"]
     ob_scores = []
     for col in ob_cols:
@@ -135,13 +139,12 @@ def style_table(row):
     if len(ob_scores) == 3:
         min_col = min(ob_scores, key=lambda x: x[1])[0]
         col_idx = row.index.get_loc(min_col)
-        # Přidáme styl pro přeškrtnutí ke stávajícímu pozadí
         styles[col_idx] += ' text-decoration: line-through; color: #a8a8a8;'
         
     return styles
 
 st.title("Nominační žebříček JMS 2026")
-st.write("Aplikace řadí závodníky, zvýrazňuje top 6 a škrtá nejhorší závod.")
+st.write("Aplikace řadí závodníky, barví přímou nominaci (1.-4.) i širší výběr (5.-6.) a škrtá nejhorší závod.")
 
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
@@ -172,7 +175,6 @@ if not df_historie.empty:
     df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky'].copy()
     df_juniori = df_zobr[df_zobr['Kategorie'] == 'Junioři'].copy()
     
-    # Přidání sloupce Pořadí
     df_juniorky = df_juniorky.reset_index(drop=True)
     df_juniorky.insert(0, 'Pořadí', range(1, len(df_juniorky) + 1))
     df_juniorky['Pořadí'] = df_juniorky['Pořadí'].astype(str) + "."
@@ -186,7 +188,6 @@ if not df_historie.empty:
     df_juniorky_display = df_juniorky.drop(columns=sloupce_skryt).fillna("")
     df_juniori_display = df_juniori.drop(columns=sloupce_skryt).fillna("")
     
-    # Aplikace společného stylu (barva pozadí + přeškrtnutí)
     styled_juniorky = df_juniorky_display.style.apply(style_table, axis=1)
     styled_juniori = df_juniori_display.style.apply(style_table, axis=1)
     
@@ -231,7 +232,6 @@ with zalozka_pdf:
         if zavodnici:
             df_nove = pd.DataFrame(zavodnici)
             if not df_historie.empty:
-                # PDF má přednost: smažeme stará data TĚCHTO lidí z TOHOTO závodu
                 jmena_v_pdf = df_nove['Jméno'].tolist()
                 maska_k_smazani = (df_historie['Závod'] == nazev_zavodu_pdf) & (df_historie['Jméno'].isin(jmena_v_pdf))
                 df_historie = df_historie[~maska_k_smazani]
