@@ -15,7 +15,6 @@ POVOLENE_ZAVODY = [
 
 # --- POMOCNÉ FUNKCE PRO VÝPOČET BODŮ ---
 def ziskej_body_za_umisteni(poradi):
-    # Převod pořadí na body podle nominačních kritérií OB
     if pd.isna(poradi): return 0
     try:
         poradi = int(poradi)
@@ -32,7 +31,6 @@ def ziskej_body_za_umisteni(poradi):
     else: return 0
 
 def ziskej_body_za_drahu(cas_str, klub):
-    # 1. Převod času na sekundy (např. z "10:45" na 645 sekund)
     if not isinstance(cas_str, str) or ":" not in cas_str:
         return 0
     
@@ -42,7 +40,6 @@ def ziskej_body_za_drahu(cas_str, klub):
     except ValueError:
         return 0
         
-    # 2. Zjištění pohlaví z registračního čísla (např. VRL0852 -> 52 znamená žena)
     je_zena = False
     match = re.search(r"\d{4}$", str(klub).strip())
     if match:
@@ -50,34 +47,45 @@ def ziskej_body_za_drahu(cas_str, klub):
         if mesic > 50:
             je_zena = True
 
-    # 3. Bodovací tabulky z PDF kritérií
-    if je_zena: # Kategorie D (do 10:45 = 7b atd.)
-        if sekundy <= 645: return 7       # do 10:45
-        elif sekundy <= 655: return 6     # 10:46 - 10:55
-        elif sekundy <= 665: return 5     # 10:56 - 11:05
-        elif sekundy <= 675: return 4     # 11:06 - 11:15
-        elif sekundy <= 685: return 3     # 11:16 - 11:25
-        elif sekundy <= 695: return 2     # 11:26 - 11:35
-        elif sekundy <= 705: return 1     # 11:36 - 11:45
+    if je_zena: 
+        if sekundy <= 645: return 7       
+        elif sekundy <= 655: return 6     
+        elif sekundy <= 665: return 5     
+        elif sekundy <= 675: return 4     
+        elif sekundy <= 685: return 3     
+        elif sekundy <= 695: return 2     
+        elif sekundy <= 705: return 1     
         else: return 0
-    else: # Kategorie H (do 8:55 = 7b atd.)
-        if sekundy <= 535: return 7       # do 8:55
-        elif sekundy <= 545: return 6     # 8:56 - 9:05
-        elif sekundy <= 555: return 5     # 9:06 - 9:15
-        elif sekundy <= 565: return 4     # 9:16 - 9:25
-        elif sekundy <= 575: return 3     # 9:26 - 9:35
-        elif sekundy <= 585: return 2     # 9:36 - 9:45
-        elif sekundy <= 595: return 1     # 9:46 - 9:55
+    else: 
+        if sekundy <= 535: return 7       
+        elif sekundy <= 545: return 6     
+        elif sekundy <= 555: return 5     
+        elif sekundy <= 565: return 4     
+        elif sekundy <= 575: return 3     
+        elif sekundy <= 585: return 2     
+        elif sekundy <= 595: return 1     
         else: return 0
 
 st.title("Nominační žebříček JMS 2026")
 st.write("Aplikace ukládá průběžné výsledky. Po zavření okna o data nepřijdete.")
 
-# NAČTENÍ HISTORIE
+# 1. NAČTENÍ HISTORIE A VYTVOŘENÍ SLOVNÍKU ZÁVODNÍKŮ
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
 else:
     df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
+
+# Extrakce unikátních závodníků (Mapování: Jméno -> Klub)
+slovnik_zavodniku = {}
+if not df_historie.empty:
+    for index, radek in df_historie.iterrows():
+        # Uložíme si jméno a k němu odpovídající klub
+        slovnik_zavodniku[radek["Jméno"]] = radek["Klub"]
+
+# Seznam jmen pro rolovací nabídku
+seznam_jmen = list(slovnik_zavodniku.keys())
+# Seřadíme jména podle abecedy pro lepší přehlednost
+seznam_jmen.sort()
 
 if not df_historie.empty:
     st.subheader("Průběžně uložená data v databázi")
@@ -85,11 +93,11 @@ if not df_historie.empty:
 
 st.subheader("Přidat nové výsledky")
 
-# Přejmenovali jsme záložku, aby bylo jasné, k čemu slouží
 zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Hromadné zadání (jako Excel)"])
 
 # --- ZÁLOŽKA 1: NAHRÁVÁNÍ PDF ---
 with zalozka_pdf:
+    st.info("Při prvním nahrání PDF (např. Sprint) se závodníci automaticky uloží a budou k dispozici pro ruční zadávání v druhé záložce.")
     nazev_zavodu_pdf = st.selectbox("Vyberte závod pro import z PDF:", POVOLENE_ZAVODY, key="pdf_zavod")
     uploaded_file = st.file_uploader("Nahrajte PDF s výsledky", type="pdf")
     
@@ -104,8 +112,6 @@ with zalozka_pdf:
                         poradi = int(match.group(1))
                         jmeno = match.group(2).strip()
                         klub = match.group(3)
-                        
-                        # PDF používáme primárně pro OB, takže počítáme body za umístění
                         body = ziskej_body_za_umisteni(poradi)
                         
                         zavodnici.append({
@@ -127,57 +133,71 @@ with zalozka_pdf:
 
 # --- ZÁLOŽKA 2: RUČNÍ (HROMADNÉ) ZADÁVÁNÍ ---
 with zalozka_rucne:
-    st.info("Vyberte závod a vložte výsledky přímo do tabulky. Můžete přidat libovolný počet řádků kliknutím pod tabulku.")
-    
-    nazev_zavodu_rucne = st.selectbox("Vyberte závod pro ruční zadání:", POVOLENE_ZAVODY, key="rucne_zavod")
-    
-    # Připravíme správný formát prázdné tabulky podle vybraného závodu
-    if nazev_zavodu_rucne == "Dráhový test":
-        df_template = pd.DataFrame(columns=["Čas (MM:SS)", "Jméno", "Klub"])
-        st.warning("Nezapomeňte zadávat klub s plným registračním číslem (např. VRL0852), aplikace z něj pozná, jestli jde o kategorii D nebo H!")
+    if not seznam_jmen:
+        st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF, abych si zapamatoval jména a kluby.")
     else:
-        df_template = pd.DataFrame(columns=["Pořadí", "Jméno", "Klub"])
-
-    # Klíčový prvek: data_editor (hromadné zadávání)
-    edited_df = st.data_editor(df_template, num_rows="dynamic", use_container_width=True)
-    
-    if st.button("Uložit všechny výsledky z tabulky"):
-        # Odstraníme z tabulky prázdné řádky, které uživatel nechal nevyplněné
-        edited_df.dropna(how='all', inplace=True)
+        st.info("Vyberte jméno ze seznamu. Klub bude přidělen automaticky na pozadí podle naší databáze!")
         
-        if edited_df.empty:
-            st.warning("Tabulka je prázdná, není co uložit.")
+        nazev_zavodu_rucne = st.selectbox("Vyberte závod pro ruční zadání:", POVOLENE_ZAVODY, key="rucne_zavod")
+        
+        # Ostranili jsme sloupec "Klub", uživatel ho nemusí zadávat
+        if nazev_zavodu_rucne == "Dráhový test":
+            df_template = pd.DataFrame(columns=["Jméno", "Čas (MM:SS)"])
         else:
-            zavodnici_rucne = []
-            # Projdeme tabulku řádek po řádku a vypočítáme body
-            for index, radek in edited_df.iterrows():
-                jmeno = radek.get("Jméno", "")
-                klub = radek.get("Klub", "")
-                
-                # Zpracování podle toho, o jaký závod jde
-                if nazev_zavodu_rucne == "Dráhový test":
-                    cas_str = str(radek.get("Čas (MM:SS)", ""))
-                    body = ziskej_body_za_drahu(cas_str, klub)
-                    hodnota_zaznamu = cas_str
-                else:
-                    poradi = radek.get("Pořadí")
-                    body = ziskej_body_za_umisteni(poradi)
-                    hodnota_zaznamu = str(poradi)
+            df_template = pd.DataFrame(columns=["Jméno", "Pořadí"])
 
-                # Přidáme do seznamu pouze řádky s vyplněným jménem
-                if pd.notna(jmeno) and jmeno != "":
-                    zavodnici_rucne.append({
-                        "Závod": nazev_zavodu_rucne,
-                        "Pořadí/Čas": hodnota_zaznamu,
-                        "Jméno": jmeno,
-                        "Klub": klub,
-                        "Získané body": body
-                    })
+        # 2. NASTAVENÍ SLOUPCE "Jméno" JAKO VÝBĚROVÉHO SEZNAMU (Selectbox)
+        konfigurace_sloupcu = {
+            "Jméno": st.column_config.SelectboxColumn(
+                "Jméno závodníka",
+                help="Vyberte jméno z nabídky",
+                width="medium",
+                options=seznam_jmen,
+                required=True
+            )
+        }
+
+        edited_df = st.data_editor(
+            df_template, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            column_config=konfigurace_sloupcu
+        )
+        
+        if st.button("Uložit všechny výsledky z tabulky"):
+            edited_df.dropna(how='all', inplace=True)
             
-            # Uložení kompletního seznamu
-            if zavodnici_rucne:
-                df_nove = pd.DataFrame(zavodnici_rucne)
-                df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
-                df_komplet.to_csv(SOUBOR_DATA, index=False)
-                st.success(f"Všechny výsledky pro '{nazev_zavodu_rucne}' byly úspěšně uloženy!")
-                st.rerun()
+            if edited_df.empty:
+                st.warning("Tabulka je prázdná, není co uložit.")
+            else:
+                zavodnici_rucne = []
+                for index, radek in edited_df.iterrows():
+                    jmeno = radek.get("Jméno", "")
+                    
+                    if pd.notna(jmeno) and jmeno != "":
+                        # 3. AUTOMATICKÉ DOPLNĚNÍ KLUBU Z NAŠEHO SLOVNÍKU
+                        klub = slovnik_zavodniku.get(jmeno, "Neznámý")
+                        
+                        if nazev_zavodu_rucne == "Dráhový test":
+                            cas_str = str(radek.get("Čas (MM:SS)", ""))
+                            body = ziskej_body_za_drahu(cas_str, klub)
+                            hodnota_zaznamu = cas_str
+                        else:
+                            poradi = radek.get("Pořadí")
+                            body = ziskej_body_za_umisteni(poradi)
+                            hodnota_zaznamu = str(poradi)
+
+                        zavodnici_rucne.append({
+                            "Závod": nazev_zavodu_rucne,
+                            "Pořadí/Čas": hodnota_zaznamu,
+                            "Jméno": jmeno,
+                            "Klub": klub,
+                            "Získané body": body
+                        })
+                
+                if zavodnici_rucne:
+                    df_nove = pd.DataFrame(zavodnici_rucne)
+                    df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
+                    df_komplet.to_csv(SOUBOR_DATA, index=False)
+                    st.success(f"Všechny výsledky pro '{nazev_zavodu_rucne}' byly úspěšně uloženy!")
+                    st.rerun()
