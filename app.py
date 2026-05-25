@@ -102,7 +102,6 @@ def spocitej_skore_a_kriteria(df_zavodnik):
     })
 
 def format_body(val):
-    """Odstraní nevzhledná desetinná místa u celých čísel"""
     if pd.isna(val) or str(val).strip() == "":
         return ""
     try:
@@ -110,33 +109,39 @@ def format_body(val):
     except ValueError:
         return str(val)
 
-def style_dropped_race(row):
-    """Pandas Styler: Najde třetí nejhorší OB závod a vizuálně ho přeškrtne."""
+def style_table(row):
+    """Zvýrazní prvních 6 a přeškrtne nejhorší závod."""
+    styles = [''] * len(row)
+    
+    # 1. Zvýraznění TOP 6
+    if 'Pořadí' in row.index:
+        try:
+            poradi = int(str(row['Pořadí']).replace('.', ''))
+            if poradi <= 6:
+                styles = ['background-color: rgba(46, 204, 113, 0.2);'] * len(row)
+        except ValueError:
+            pass
+            
+    # 2. Přeškrtnutí nejhoršího závodu
     ob_cols = ["Sprint", "Střední trať (krátká)", "Dlouhá trať (klasika)"]
-    styles = pd.Series('', index=row.index)
-    
     ob_scores = []
-    # Posbíráme všechny platné body z OB závodů pro daného závodníka
     for col in ob_cols:
-        if col in row.index:
-            val = row[col]
-            if val != "":
-                try:
-                    ob_scores.append((col, float(val)))
-                except ValueError:
-                    pass
-    
-    # Škrtáme pouze v případě, že běžel všechny 3 OB závody
+        if col in row.index and str(row[col]).strip() != "":
+            try:
+                ob_scores.append((col, float(row[col])))
+            except ValueError:
+                pass
+                
     if len(ob_scores) == 3:
-        # Najdeme závod s nejmenším počtem bodů
         min_col = min(ob_scores, key=lambda x: x[1])[0]
-        # Přidáme CSS styl pro přeškrtnutí a zešednutí
-        styles[min_col] = 'text-decoration: line-through; color: #a8a8a8;'
+        col_idx = row.index.get_loc(min_col)
+        # Přidáme styl pro přeškrtnutí ke stávajícímu pozadí
+        styles[col_idx] += ' text-decoration: line-through; color: #a8a8a8;'
         
     return styles
 
 st.title("Nominační žebříček JMS 2026")
-st.write("Aplikace automaticky předepisuje již uložená data a škrtá nejhorší závod.")
+st.write("Aplikace řadí závodníky, zvýrazňuje top 6 a škrtá nejhorší závod.")
 
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
@@ -160,23 +165,30 @@ if not df_historie.empty:
     
     df_zobr.sort_values(['Celkové body', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni'], ascending=[False, False, False, False], inplace=True)
     
-    # Formátování čísel (zbavíme se .0)
     for col in POVOLENE_ZAVODY + ['Celkové body']:
         if col in df_zobr.columns:
             df_zobr[col] = df_zobr[col].apply(format_body)
     
-    df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky']
-    df_juniori = df_zobr[df_zobr['Kategorie'] == 'Junioři']
+    df_juniorky = df_zobr[df_zobr['Kategorie'] == 'Juniorky'].copy()
+    df_juniori = df_zobr[df_zobr['Kategorie'] == 'Junioři'].copy()
+    
+    # Přidání sloupce Pořadí
+    df_juniorky = df_juniorky.reset_index(drop=True)
+    df_juniorky.insert(0, 'Pořadí', range(1, len(df_juniorky) + 1))
+    df_juniorky['Pořadí'] = df_juniorky['Pořadí'].astype(str) + "."
+
+    df_juniori = df_juniori.reset_index(drop=True)
+    df_juniori.insert(0, 'Pořadí', range(1, len(df_juniori) + 1))
+    df_juniori['Pořadí'] = df_juniori['Pořadí'].astype(str) + "."
     
     sloupce_skryt = ['Kategorie', 'Tie1_OB2', 'Tie2_OBmax', 'Tie3_Stredni']
     
-    # Vyčištění tabulek před zobrazením
     df_juniorky_display = df_juniorky.drop(columns=sloupce_skryt).fillna("")
     df_juniori_display = df_juniori.drop(columns=sloupce_skryt).fillna("")
     
-    # APLIKACE STYLU: Předáme tabulku do Styleru, který přeškrtne nejhorší závod
-    styled_juniorky = df_juniorky_display.style.apply(style_dropped_race, axis=1)
-    styled_juniori = df_juniori_display.style.apply(style_dropped_race, axis=1)
+    # Aplikace společného stylu (barva pozadí + přeškrtnutí)
+    styled_juniorky = df_juniorky_display.style.apply(style_table, axis=1)
+    styled_juniori = df_juniori_display.style.apply(style_table, axis=1)
     
     sloupec_holky, sloupec_kluci = st.columns(2)
     with sloupec_holky:
@@ -192,7 +204,7 @@ st.subheader("Přidat / Upravit výsledky")
 zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Celková editovatelná tabulka"])
 
 with zalozka_pdf:
-    st.info("Nahrajte PDF (např. ze Sprintu). Data se uloží a okamžitě předepíší do tabulky v druhé záložce.")
+    st.info("Nahrajte PDF (např. ze Sprintu). Data se uloží a přepíší případné ruční záznamy pro daný závod.")
     nazev_zavodu_pdf = st.selectbox("Vyberte závod pro import z PDF:", POVOLENE_ZAVODY, key="pdf_zavod")
     uploaded_file = st.file_uploader("Nahrajte PDF s výsledky", type="pdf")
     
@@ -219,7 +231,11 @@ with zalozka_pdf:
         if zavodnici:
             df_nove = pd.DataFrame(zavodnici)
             if not df_historie.empty:
-                df_historie = df_historie[df_historie['Závod'] != nazev_zavodu_pdf]
+                # PDF má přednost: smažeme stará data TĚCHTO lidí z TOHOTO závodu
+                jmena_v_pdf = df_nove['Jméno'].tolist()
+                maska_k_smazani = (df_historie['Závod'] == nazev_zavodu_pdf) & (df_historie['Jméno'].isin(jmena_v_pdf))
+                df_historie = df_historie[~maska_k_smazani]
+                
             df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
             df_komplet.to_csv(SOUBOR_DATA, index=False)
             st.success(f"Výsledky z PDF pro závod '{nazev_zavodu_pdf}' byly uloženy!")
