@@ -217,37 +217,85 @@ with zalozka_pdf:
     if uploaded_file is not None and st.button("Zpracovat PDF a uložit"):
         zavodnici = []
         with pdfplumber.open(uploaded_file) as pdf:
+            # 1. Nejprve zjistíme, zda PDF obsahuje explicitní body (např. "11b.")
+            text_celeho_pdf = "".join([strana.extract_text() or "" for strana in pdf.pages])
+            obsahuje_body_v_textu = bool(re.search(r"\d+\s*b\.", text_celeho_pdf))
+            
             for strana in pdf.pages:
-                text = strana.extract_text()
+                # layout=True lépe zachovává mezery mezi sloupci
+                text = strana.extract_text(layout=True) 
+                if not text: continue
+                
                 for radek in text.split('\n'):
-                    match = re.search(r"^(\d+)\.\s+(.*?)\s+([A-Z]{3}\d{4})", radek)
-                    if match:
-                        poradi = int(match.group(1))
-                        jmeno = match.group(2).strip()
-                        klub = match.group(3)
-                        body = ziskej_body_za_umisteni(poradi)
+                    # Hledáme, zda řádek obsahuje kód klubu (to značí, že jde o závodníka)
+                    klub_match = re.search(r"([A-Z]{3}\d{4})", radek)
+                    if klub_match:
+                        klub = klub_match.group(1)
                         
-                        zavodnici.append({
-                            "Závod": nazev_zavodu_pdf,
-                            "Pořadí/Čas": str(poradi),
-                            "Jméno": jmeno,
-                            "Klub": klub,
-                            "Získané body": body
-                        })
+                        # Extrakce pořadí (hledáme číslo s tečkou kdekoli v řádku)
+                        poradi_match = re.search(r"(?:^|\s)(\d+)\.", radek)
+                        poradi = int(poradi_match.group(1)) if poradi_match else ""
+                        
+                        # Extrakce bodů
+                        body = 0
+                        if obsahuje_body_v_textu:
+                            body_match = re.search(r"(\d+)\s*b\.", radek)
+                            if body_match:
+                                body = int(body_match.group(1))
+                            else:
+                                body = 0  # Závodník v PDF je, ale nemá vypsané body (nemá právo startu)
+                        else:
+                            # PDF body neobsahuje (klasické výsledky), aplikace je spočítá sama
+                            body = ziskej_body_za_umisteni(poradi)
+                        
+                        # Geniální trik na vyčištění jména: z řádku umažeme vše, co není jméno
+                        ciste = radek
+                        ciste = re.sub(r"([A-Z]{3}\d{4})", "", ciste) # odstraní klub
+                        ciste = re.sub(r"\d+\s*b\.", "", ciste) # odstraní body
+                        ciste = re.sub(r"(?i)\b(disk|dns)\b", "", ciste) # odstraní stavy disk/dns
+                        ciste = re.sub(r"[\d\+\.:]+", "", ciste) # odstraní všechny časy, ztráty a pořadí
+                        # Zbyde jen čisté jméno (odstraníme i nadbytečné mezery)
+                        jmeno = re.sub(r"\s+", " ", ciste).strip()
+                        
+                        # Pojistka: uložíme jen řádky, kde opravdu zbylo jméno
+                        if jmeno:
+                            zavodnici.append({
+                                "Závod": nazev_zavodu_pdf,
+                                "Pořadí/Čas": str(poradi),
+                                "Jméno": jmeno,
+                                "Klub": klub,
+                                "Získané body": body
+                            })
+                            
         if zavodnici:
             df_nove = pd.DataFrame(zavodnici)
-            if not df_historie.empty:
-                jmena_v_pdf = df_nove['Jméno'].tolist()
-                maska_k_smazani = (df_historie['Závod'] == nazev_zavodu_pdf) & (df_historie['Jméno'].isin(jmena_v_pdf))
-                df_historie = df_historie[~maska_k_smazani]
+            
+            # Jakmile simulujeme, ukládáme do dočasné paměti
+            if 'sim_mode' in st.session_state and st.session_state.sim_mode:
+                if 'df_sim' in st.session_state and not st.session_state.df_sim.empty:
+                    jmena_v_pdf = df_nove['Jméno'].tolist()
+                    maska = (st.session_state.df_sim['Závod'] == nazev_zavodu_pdf) & (st.session_state.df_sim['Jméno'].isin(jmena_v_pdf))
+                    st.session_state.df_sim = st.session_state.df_sim[~maska]
                 
-            df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
-            df_komplet.to_csv(SOUBOR_DATA, index=False)
-            st.success(f"Výsledky z PDF pro závod '{nazev_zavodu_pdf}' byly uloženy!")
+                df_komplet = pd.concat([st.session_state.df_sim if 'df_sim' in st.session_state else pd.DataFrame(), df_nove], ignore_index=True)
+                st.session_state.df_sim = df_komplet
+                st.success(f"[SIMULACE] Výsledky z PDF pro závod '{nazev_zavodu_pdf}' načteny nanečisto!")
+            
+            # Ostrý režim ukládá přímo do databáze
+            else:
+                if not df_historie.empty:
+                    jmena_v_pdf = df_nove['Jméno'].tolist()
+                    maska = (df_historie['Závod'] == nazev_zavodu_pdf) & (df_historie['Jméno'].isin(jmena_v_pdf))
+                    df_historie = df_historie[~maska]
+                    
+                df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
+                df_komplet.to_csv(SOUBOR_DATA, index=False)
+                st.success(f"Výsledky z PDF pro závod '{nazev_zavodu_pdf}' byly uloženy!")
+                
             st.rerun()
         else:
             st.warning("V PDF se nepodařilo najít žádné platné výsledky.")
-
+            
 with zalozka_rucne:
     if df_historie.empty:
         st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF.")
