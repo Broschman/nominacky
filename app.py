@@ -210,67 +210,95 @@ st.subheader("Přidat / Upravit výsledky")
 zalozka_pdf, zalozka_rucne = st.tabs(["📄 Nahrát z PDF", "✍️ Celková editovatelná tabulka"])
 
 with zalozka_pdf:
-    st.info("Nahrajte PDF (např. ze Sprintu). Data se uloží a přepíší případné ruční záznamy pro daný závod.")
+    st.info("Nahrajte PDF (např. ze Sprintu nebo Dráhy). Data se uloží a přepíší případné ruční záznamy pro daný závod.")
     nazev_zavodu_pdf = st.selectbox("Vyberte závod pro import z PDF:", POVOLENE_ZAVODY, key="pdf_zavod")
     uploaded_file = st.file_uploader("Nahrajte PDF s výsledky", type="pdf")
     
     if uploaded_file is not None and st.button("Zpracovat PDF a uložit"):
         zavodnici = []
+        
+        # 1. Paměť klubů z dřívějška (ze Sprintu), abychom u Dráhy věděli, kdo patří do jakého klubu
+        zname_kluby = {}
+        if not df_historie.empty:
+            for _, r in df_historie.iterrows():
+                zname_kluby[r['Jméno']] = r['Klub']
+        if 'df_sim' in st.session_state and not st.session_state.df_sim.empty:
+            for _, r in st.session_state.df_sim.iterrows():
+                zname_kluby[r['Jméno']] = r['Klub']
+
         with pdfplumber.open(uploaded_file) as pdf:
-            # 1. Nejprve zjistíme, zda PDF obsahuje explicitní body (např. "11b.")
             text_celeho_pdf = "".join([strana.extract_text() or "" for strana in pdf.pages])
             obsahuje_body_v_textu = bool(re.search(r"\d+\s*b\.", text_celeho_pdf))
             
             for strana in pdf.pages:
-                # layout=True lépe zachovává mezery mezi sloupci
-                text = strana.extract_text(layout=True) 
+                text = strana.extract_text(layout=True)
                 if not text: continue
                 
                 for radek in text.split('\n'):
-                    # Hledáme, zda řádek obsahuje kód klubu (to značí, že jde o závodníka)
-                    klub_match = re.search(r"([A-Z]{3}\d{4})", radek)
-                    if klub_match:
-                        klub = klub_match.group(1)
-                        
-                        # Extrakce pořadí (hledáme číslo s tečkou kdekoli v řádku)
-                        poradi_match = re.search(r"(?:^|\s)(\d+)\.", radek)
-                        poradi = int(poradi_match.group(1)) if poradi_match else ""
-                        
-                        # Extrakce bodů
-                        body = 0
-                        if obsahuje_body_v_textu:
-                            body_match = re.search(r"(\d+)\s*b\.", radek)
-                            if body_match:
-                                body = int(body_match.group(1))
-                            else:
-                                body = 0  # Závodník v PDF je, ale nemá vypsané body (nemá právo startu)
-                        else:
-                            # PDF body neobsahuje (klasické výsledky), aplikace je spočítá sama
-                            body = ziskej_body_za_umisteni(poradi)
-                        
-                        # Geniální trik na vyčištění jména: z řádku umažeme vše, co není jméno
-                        ciste = radek
-                        ciste = re.sub(r"([A-Z]{3}\d{4})", "", ciste) # odstraní klub
-                        ciste = re.sub(r"\d+\s*b\.", "", ciste) # odstraní body
-                        ciste = re.sub(r"(?i)\b(disk|dns)\b", "", ciste) # odstraní stavy disk/dns
-                        ciste = re.sub(r"[\d\+\.:]+", "", ciste) # odstraní všechny časy, ztráty a pořadí
-                        # Zbyde jen čisté jméno (odstraníme i nadbytečné mezery)
-                        jmeno = re.sub(r"\s+", " ", ciste).strip()
-                        
-                        # Pojistka: uložíme jen řádky, kde opravdu zbylo jméno
-                        if jmeno:
-                            zavodnici.append({
-                                "Závod": nazev_zavodu_pdf,
-                                "Pořadí/Čas": str(poradi),
-                                "Jméno": jmeno,
-                                "Klub": klub,
-                                "Získané body": body
-                            })
+                    
+                    # --- VĚTEV 1: SPECIFICKÁ LOGIKA PRO DRÁHOVÝ TEST ---
+                    if nazev_zavodu_pdf == "Dráhový test":
+                        # Regulární výraz hledá: Text bez čísel (Jméno) -> Čas (MM:SS) -> Číslo (Body)
+                        for match in re.finditer(r"([^\d\n]{5,}?)\s+(\d{1,2}:\d{2})\s+(\d+)", radek):
+                            jmeno = match.group(1).strip()
+                            jmeno = re.sub(r"\s+", " ", jmeno) # Odstranění vícenásobných mezer z formátování PDF
+                            cas_str = match.group(2)
+                            body = int(match.group(3))
                             
+                            # Pokud jméno v databázi ještě není (např. nenahrál jsi Sprint), dostane Neznámý
+                            klub = zname_kluby.get(jmeno, "Neznámý")
+                            
+                            # Ignorujeme případné hlavičky tabulky
+                            if jmeno.lower() not in ["juniorky", "junioři", "čas", "body"]:
+                                zavodnici.append({
+                                    "Závod": nazev_zavodu_pdf,
+                                    "Pořadí/Čas": cas_str,
+                                    "Jméno": jmeno,
+                                    "Klub": klub,
+                                    "Získané body": body
+                                })
+
+                    # --- VĚTEV 2: LOGIKA PRO LESNÍ ZÁVODY (Sprint, Krátká, Klasika) ---
+                    else:
+                        klub_match = re.search(r"([A-Z]{3}\d{4})", radek)
+                        if klub_match:
+                            klub = klub_match.group(1)
+                            poradi_match = re.search(r"(?:^|\s)(\d+)\.", radek)
+                            poradi = int(poradi_match.group(1)) if poradi_match else ""
+                            
+                            # Úprava, aby dokázal pracovat s body podle toho, jestli je závodník má (právo startu)
+                            body = 0
+                            if obsahuje_body_v_textu:
+                                body_match = re.search(r"(\d+)\s*b\.", radek)
+                                if body_match:
+                                    body = int(body_match.group(1))
+                                else:
+                                    body = 0 # Není v nominaci, dostává 0
+                            else:
+                                body = ziskej_body_za_umisteni(poradi)
+                            
+                            # Vyčištění jména z řádku
+                            ciste = radek
+                            ciste = re.sub(r"([A-Z]{3}\d{4})", "", ciste)
+                            ciste = re.sub(r"\d+\s*b\.", "", ciste)
+                            ciste = re.sub(r"(?i)\b(disk|dns)\b", "", ciste)
+                            ciste = re.sub(r"[\d\+\.:]+", "", ciste)
+                            jmeno = re.sub(r"\s+", " ", ciste).strip()
+                            
+                            if jmeno:
+                                zavodnici.append({
+                                    "Závod": nazev_zavodu_pdf,
+                                    "Pořadí/Čas": str(poradi),
+                                    "Jméno": jmeno,
+                                    "Klub": klub,
+                                    "Získané body": body
+                                })
+        
+        # --- UKLÁDÁNÍ DAT (Propojeno se Simulací) ---
         if zavodnici:
             df_nove = pd.DataFrame(zavodnici)
             
-            # Jakmile simulujeme, ukládáme do dočasné paměti
+            # Jakmile simulujeme, ukládáme do dočasné paměti pískoviště
             if 'sim_mode' in st.session_state and st.session_state.sim_mode:
                 if 'df_sim' in st.session_state and not st.session_state.df_sim.empty:
                     jmena_v_pdf = df_nove['Jméno'].tolist()
@@ -281,7 +309,7 @@ with zalozka_pdf:
                 st.session_state.df_sim = df_komplet
                 st.success(f"[SIMULACE] Výsledky z PDF pro závod '{nazev_zavodu_pdf}' načteny nanečisto!")
             
-            # Ostrý režim ukládá přímo do databáze
+            # Ostrý režim ukládá přímo do databáze (CSV)
             else:
                 if not df_historie.empty:
                     jmena_v_pdf = df_nove['Jméno'].tolist()
@@ -290,12 +318,11 @@ with zalozka_pdf:
                     
                 df_komplet = pd.concat([df_historie, df_nove], ignore_index=True)
                 df_komplet.to_csv(SOUBOR_DATA, index=False)
-                st.success(f"Výsledky z PDF pro závod '{nazev_zavodu_pdf}' byly uloženy!")
+                st.success(f"Výsledky z PDF pro závod '{nazev_zavodu_pdf}' byly uloženy do databáze!")
                 
             st.rerun()
         else:
-            st.warning("V PDF se nepodařilo najít žádné platné výsledky.")
-            
+            st.warning("V PDF se nepodařilo najít žádné platné výsledky.")            
 with zalozka_rucne:
     if df_historie.empty:
         st.warning("Zatím neznám žádné závodníky. Nahrajte prosím nejprve výsledky prvního závodu v PDF.")
