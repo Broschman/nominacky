@@ -16,6 +16,61 @@ POVOLENE_ZAVODY = [
 st.set_page_config(page_title="Nominace JMS 2026", layout="wide")
 
 # ==========================================
+# VYNUCENÍ ZOBRAZENÍ NA ŠÍŘKU (MOBILES)
+# ==========================================
+mobil_overlay_css = """
+<style>
+/* Skryjeme overlay jako výchozí stav */
+#rotate-device-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    z-index: 9999999;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 2rem;
+}
+
+/* Animace rotujícího telefonu */
+#rotate-device-overlay svg {
+    width: 80px; height: 80px;
+    margin-bottom: 20px;
+    animation: rotatePhone 2s ease-in-out infinite;
+    color: var(--primary-color);
+}
+
+@keyframes rotatePhone {
+    0% { transform: rotate(0deg); }
+    50% { transform: rotate(-90deg); }
+    100% { transform: rotate(0deg); }
+}
+
+/* Pravidlo aktivace: Malý displej (mobil) A ZÁROVEŇ orientace na výšku (portrait) */
+@media screen and (max-width: 768px) and (orientation: portrait) {
+    #rotate-device-overlay {
+        display: flex !important;
+    }
+}
+</style>
+
+<div id="rotate-device-overlay">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+        <line x1="12" y1="18" x2="12.01" y2="18"></line>
+    </svg>
+    <h2>Otočte prosím telefon na šířku</h2>
+    <p>Tato aplikace obsahuje široké výsledkové tabulky. Pro jejich správné zobrazení a možnost zadávání dat prosím otočte své zařízení na šířku.</p>
+</div>
+"""
+# Vložíme CSS kód přímo do stránky
+st.markdown(mobil_overlay_css, unsafe_allow_html=True)
+
+
+# ==========================================
 # 1. POMOCNÉ FUNKCE PRO VÝPOČTY
 # ==========================================
 
@@ -112,11 +167,10 @@ def style_table(row):
     return styles
 
 # ==========================================
-# 2. FUNKCE PRO ZPRACOVÁNÍ TABULEK (DRY)
+# 2. FUNKCE PRO ZPRACOVÁNÍ TABULEK
 # ==========================================
 
 def zobraz_zebricek(df_dlouhy):
-    """Zobrazí finální obarvený žebříček z předaných dat."""
     if df_dlouhy.empty:
         st.info("Zatím nejsou uloženy žádné výsledky.")
         return
@@ -166,7 +220,6 @@ def zobraz_zebricek(df_dlouhy):
         else: st.write("Žádná data.")
 
 def priprav_siroke_tabulky(df_dlouhy):
-    """Převede dlouhá data na široká (pro editaci)."""
     sloupce_vystup = ["Jméno", "Klub", "Celkové body"] + POVOLENE_ZAVODY
     if df_dlouhy.empty:
         prazdne = pd.DataFrame(columns=sloupce_vystup)
@@ -189,7 +242,6 @@ def priprav_siroke_tabulky(df_dlouhy):
     return df_holky, df_kluci
 
 def vytvor_dlouhy_format(edited_komplet):
-    """Převede širokou editovanou tabulku zpět na dlouhá databázová data a spočítá body."""
     nova_data = []
     for index, radek in edited_komplet.iterrows():
         jmeno = radek.get("Jméno", "")
@@ -216,7 +268,6 @@ def vytvor_dlouhy_format(edited_komplet):
 
 st.title("Nominační žebříček JMS 2026")
 
-# Načtení OFICIÁLNÍCH dat
 if os.path.exists(SOUBOR_DATA):
     df_historie = pd.read_csv(SOUBOR_DATA)
     if "Pořadí" in df_historie.columns and "Pořadí/Čas" not in df_historie.columns:
@@ -224,19 +275,18 @@ if os.path.exists(SOUBOR_DATA):
 else:
     df_historie = pd.DataFrame(columns=["Závod", "Pořadí/Čas", "Jméno", "Klub", "Získané body"])
 
-# Vytvoření tří záložek
 zalozka_oficialni, zalozka_piskoviste, zalozka_admin = st.tabs([
     "🏆 Oficiální žebříček", 
     "🧪 Pískoviště (Co kdyby...)", 
     "⚙️ Administrace dat"
 ])
 
-# --- ZÁLOŽKA 1: OFICIÁLNÍ ŽEBŘÍČEK (Pouze pro čtení) ---
+# --- ZÁLOŽKA 1: OFICIÁLNÍ ŽEBŘÍČEK ---
 with zalozka_oficialni:
     st.write("Toto je oficiální žebříček potvrzený trenérem. Vidí ho všichni stejně.")
     zobraz_zebricek(df_historie)
 
-# --- ZÁLOŽKA 2: PÍSKOVIŠTĚ (Real-time simulace) ---
+# --- ZÁLOŽKA 2: PÍSKOVIŠTĚ ---
 with zalozka_piskoviste:
     st.info("💡 **Tady si můžeš zkoušet cokoliv!** Uprav si časy a pořadí přímo v tabulce. Žebříček se okamžitě přepočítá podle tvých dat. Tvé úpravy nikdo jiný neuvidí a ostrá data zůstanou v bezpečí.")
     
@@ -246,19 +296,17 @@ with zalozka_piskoviste:
     edited_h_sim = st.data_editor(df_h_sim, disabled=["Jméno", "Klub", "Celkové body"], width="stretch", hide_index=True, key="sim_h")
     edited_k_sim = st.data_editor(df_k_sim, disabled=["Jméno", "Klub", "Celkové body"], width="stretch", hide_index=True, key="sim_k")
     
-    # Okamžitý real-time výpočet simulace!
     df_simulace_komplet = vytvor_dlouhy_format(pd.concat([edited_h_sim, edited_k_sim], ignore_index=True))
     
     st.divider()
     st.header("✨ Tvůj nasimulovaný žebříček")
     zobraz_zebricek(df_simulace_komplet)
 
-# --- ZÁLOŽKA 3: ADMINISTRACE (Pod heslem) ---
+# --- ZÁLOŽKA 3: ADMINISTRACE ---
 with zalozka_admin:
     st.warning("Tato sekce slouží pouze trenérům pro nahrávání a ostré úpravy oficiálních dat.")
     heslo = st.text_input("Zadejte trenérské heslo:", type="password")
     
-    # Heslo je nastaveno na 'trener'
     if heslo == "trener":
         st.success("Administrace odemčena.")
         
